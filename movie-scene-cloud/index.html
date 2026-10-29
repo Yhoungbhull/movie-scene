@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movie Scene</title>
+<style>
+:root{--bg:#eef1f4;--ink:#1b2430;--mute:#5d6b7a;--card:#fff;--accent:#0e7c7b;--line:#c5ced8}
+@media (prefers-color-scheme:dark){:root{--bg:#161c24;--ink:#e8edf2;--mute:#9aa8b6;--card:#1f2832;--accent:#3cc4c2;--line:#3a4756}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:max(20px,env(safe-area-inset-top)) 18px max(24px,env(safe-area-inset-bottom))}
+main{max-width:520px;margin:0 auto}
+h1{font:700 2rem/1.1 Georgia,serif;margin:8px 0 6px}
+p.sub{color:var(--mute);margin:0 0 22px}
+label.pick{display:block;border:2px dashed var(--line);border-radius:14px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--card)}
+label.pick:focus-within{outline:3px solid var(--accent)}
+input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
+input.t{width:100%;padding:12px;margin-top:14px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
+button{font:inherit;font-weight:600;background:var(--accent);color:#fff;border:0;border-radius:12px;padding:14px;width:100%;margin-top:14px}
+button[disabled]{opacity:.5}
+#status{margin:16px 0;color:var(--mute)}
+.ticket{display:flex;gap:14px;background:var(--card);border-radius:12px;padding:14px;margin:12px 0;border-left:6px solid var(--accent)}
+.ticket img{width:64px;height:96px;object-fit:cover;border-radius:6px;background:var(--line)}
+.ticket h2{font:700 1.1rem Georgia,serif;margin:0}
+.bar{height:6px;background:var(--line);border-radius:3px;margin:6px 0}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.why{font-size:.9rem;color:var(--mute);margin:0}
+.fb{margin-top:20px;display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Movie Scene</h1>
+  <p class="sub">Pick a short clip (up to 30 seconds) and find out which movie, show or music video it is from.</p>
+  <label class="pick"><span id="pickText">Tap to choose a video</span>
+    <input type="file" id="file" accept="video/*"></label>
+  <input class="t" id="code" placeholder="Access code" autocomplete="off">
+  <button id="go" disabled>Find it</button>
+  <div id="status" role="status"></div>
+  <div id="out"></div>
+  <div class="fb" id="fb">
+    <p class="why">Wrong answer? Tell us the real title so we can improve.</p>
+    <input class="t" id="real" placeholder="Real title">
+    <button id="send">Send correction</button>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let guessed="";
+try{$("code").value=localStorage.getItem("code")||""}catch(e){}
+$("file").onchange=()=>{const f=$("file").files[0];if(f){$("pickText").textContent=f.name;$("go").disabled=false}};
+$("go").onclick=async()=>{
+  const f=$("file").files[0]; if(!f) return;
+  $("go").disabled=true; $("out").innerHTML=""; $("fb").style.display="none";
+  $("status").textContent="Uploading and listening to your clip. This can take up to a minute.";
+  const fd=new FormData(); fd.append("video",f); fd.append("code",$("code").value);
+  try{localStorage.setItem("code",$("code").value)}catch(e){}
+  try{
+    const r=await fetch("/identify",{method:"POST",body:fd}); const d=await r.json();
+    if(d.error){$("status").textContent=d.error}
+    else{
+      $("status").textContent="Best matches:"; guessed=d.guesses.map(g=>g.title).join(", ");
+      $("out").innerHTML=d.guesses.map(()=>`<div class="ticket"><img alt=""><div><h2></h2><div class="why y"></div><div class="bar"><i></i></div><p class="why r"></p></div></div>`).join("");
+      document.querySelectorAll(".ticket").forEach((el,i)=>{const g=d.guesses[i];
+        if(g.poster) el.querySelector("img").src=g.poster;
+        el.querySelector("h2").textContent=g.title;
+        el.querySelector(".y").textContent=`${g.type||""} ${g.year||""} · ${g.confidence}% sure`;
+        el.querySelector(".bar i").style.width=(+g.confidence||0)+"%";
+        el.querySelector(".r").textContent=g.reason||""});
+      $("fb").style.display="block";
+    }
+  }catch(e){$("status").textContent="Something went wrong. Check your connection and try again."}
+  $("go").disabled=false;
+};
+$("send").onclick=async()=>{
+  const fd=new FormData(); fd.append("wrong",guessed); fd.append("correct",$("real").value);
+  await fetch("/feedback",{method:"POST",body:fd}); $("real").value=""; $("status").textContent="Thanks, correction saved.";
+};
+</script>
+</body>
+</html>
