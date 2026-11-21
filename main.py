@@ -41,15 +41,25 @@ If you are not sure, give a LOW confidence. Never invent a title."""
 def run(*args):
     return subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *args], capture_output=True)
 
-async def poster(title):
-    if not TMDB: return None
+async def artwork(title, typ):
+    """Poster for movies/shows, album art for music. iTunes needs no key."""
+    t = (typ or "").lower()
+    music = "music" in t
     try:
         async with httpx.AsyncClient(timeout=8) as h:
-            r = await h.get("https://api.themoviedb.org/3/search/multi",
-                            params={"api_key": TMDB, "query": title})
-        for x in r.json().get("results", []):
-            if x.get("poster_path"):
-                return "https://image.tmdb.org/t/p/w185" + x["poster_path"]
+            if TMDB and not music:
+                r = await h.get("https://api.themoviedb.org/3/search/multi",
+                                params={"api_key": TMDB, "query": title})
+                for x in r.json().get("results", []):
+                    if x.get("poster_path"):
+                        return "https://image.tmdb.org/t/p/w342" + x["poster_path"]
+            entity = "song" if music else ("tvSeason" if "show" in t else "movie")
+            term = title.replace(" - ", " ") if music else title
+            r = await h.get("https://itunes.apple.com/search",
+                            params={"term": term, "entity": entity, "limit": 1})
+            res = r.json().get("results", [])
+            if res and res[0].get("artworkUrl100"):
+                return res[0]["artworkUrl100"].replace("100x100", "400x400")
     except Exception:
         pass
     return None
@@ -59,7 +69,7 @@ def home():
     return FileResponse("index.html")
 
 @app.post("/identify")
-async def identify(video: UploadFile = File(...), code: str = Form("")):
+async def identify(video: UploadFile = File(...), code: str = Form(""), start: float = Form(0)):
     if ACCESS_CODE and code.strip() != ACCESS_CODE:
         return {"error": "Wrong access code. Ask Adama for the code."}
     today = datetime.date.today().isoformat()
@@ -69,11 +79,12 @@ async def identify(video: UploadFile = File(...), code: str = Form("")):
     if len(data) > 80_000_000:
         return {"error": "Video is too large. Trim it to about 30 seconds."}
     used[today] = used.get(today, 0) + 1
+    ss = max(0.0, min(float(start or 0), 7200.0))   # where the 30 seconds begin
     with tempfile.TemporaryDirectory() as d:
         src = f"{d}/in"
         open(src, "wb").write(data)
-        run("-i", src, "-t", "30", "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", f"{d}/a.mp3")
-        run("-i", src, "-t", "30", "-vf", "fps=1/5,scale=640:-1", f"{d}/f%02d.jpg")
+        run("-ss", str(ss), "-i", src, "-t", "30", "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", f"{d}/a.mp3")
+        run("-ss", str(ss), "-i", src, "-t", "30", "-vf", "fps=1/5,scale=640:-1", f"{d}/f%02d.jpg")
         parts = [types.Part.from_bytes(data=open(p, "rb").read(), mime_type="image/jpeg")
                  for p in sorted(glob.glob(f"{d}/f*.jpg"))[:6]]
         if os.path.exists(f"{d}/a.mp3"):
@@ -87,7 +98,7 @@ async def identify(video: UploadFile = File(...), code: str = Form("")):
         except Exception as e:
             return {"error": f"The AI step failed: {str(e)[:160]}"}
         for g in guesses:
-            g["poster"] = await poster(g.get("title", ""))
+            g["poster"] = await artwork(g.get("title", ""), g.get("type", ""))
         return {"guesses": guesses}
 
 @app.post("/feedback")
